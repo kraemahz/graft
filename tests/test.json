@@ -1,0 +1,4 @@
+{"prism": {"addr": "localhost:5050",
+           "event_sources": ["job-result"],
+           "event_sinks": ["job-queue"]},
+ "namespace": "default"}
