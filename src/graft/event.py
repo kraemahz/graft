@@ -1,5 +1,7 @@
+import base64
 import logging
 import json
+
 from dataclasses import asdict, dataclass
 from queue import Queue
 from typing import List, Optional
@@ -17,18 +19,23 @@ class PrismConfig:
     event_sinks: List[str]
 
 
+def encode_b64(data: str) -> str:
+    """Do the string dance to appease the byte-encoded gods"""
+    return base64.standard_b64encode(data.encode('utf-8')).decode('utf-8')
+
+
 def push_job_result(client: Client, result: Job, sources: List[str]):
     result = asdict(result)
     result["completion_time"] = result["completion_time"].isoformat()
-    json_bytes = json.dumps(result).encode('utf-8')
+    result["job_log"] = (
+        encode_b64(result["job_log"])
+        if result["job_log"] is not None else None
+    )
+    json_text = json.dumps(result)
+    _log.info("Job result: %s", json_text)
+    json_bytes = json_text.encode('utf-8')
     for source in sources:
         client.emit(source, json_bytes)
-
-
-@dataclass
-class Task:
-    name: str
-    container: str
 
 
 def connect_to_event_listener(config: PrismConfig,
@@ -36,14 +43,9 @@ def connect_to_event_listener(config: PrismConfig,
                               queue: Queue):
     def event_handler(wavelet: Wavelet):
         for photon in wavelet.photons:
-            task_data = json.loads(photon.payload)
-            try:
-                task = Task(**task_data)
-                queue.put(task)
-            except TypeError:
-                _log.warning(
-                    "Could not make Task out of incoming data, got: %s",
-                    task_data)
+            data = json.loads(photon.payload)
+            _log.info("Job task: %s", data)
+            queue.put(data)
 
     client = Client(f"ws://{config.addr}", event_handler)
     for event_source in config.event_sources:

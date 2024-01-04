@@ -18,16 +18,8 @@ __copyright__ = "Subsequent Corporation"
 __license__ = "MIT"
 
 
-def parse_args(args):
-    """Parse command line parameters
-
-    Args:
-      args (List[str]): command line parameters as list of strings
-          (for example  ``["--help"]``).
-
-    Returns:
-      :obj:`argparse.Namespace`: command line parameters namespace
-    """
+def parse_args(args: List[str]) -> argparse.Namespace:
+    """Parse command line parameters"""
     parser = argparse.ArgumentParser(description="Graft Job runner")
     parser.add_argument(
         "--version",
@@ -46,22 +38,18 @@ def parse_args(args):
         const=logging.INFO,
     )
     parser.add_argument(
-        "-vv",
-        "--very-verbose",
+        "--debug",
         dest="loglevel",
-        help="set loglevel to DEBUG",
+        help=argparse.SUPPRESS,
         action="store_const",
         const=logging.DEBUG,
     )
+
     return parser.parse_args(args)
 
 
-def setup_logging(loglevel):
-    """Setup basic logging
-
-    Args:
-      loglevel (int): minimum loglevel for emitting messages
-    """
+def setup_logging(loglevel: int):
+    """Setup basic logging"""
     logformat = "[%(asctime)s] %(levelname)s:%(name)s:%(message)s"
     logging.basicConfig(
         level=loglevel,
@@ -83,12 +71,7 @@ class Config:
         self.auth = None if auth is None else AuthConfig(**auth)
 
 
-def main(args):
-    """Main function.
-    Args:
-      args (List[str]): command line parameters as list of strings
-          (for example  ``["config_path", "-v"]``).
-    """
+def main(args: List[str]):
     args = parse_args(args)
     setup_logging(args.loglevel)
 
