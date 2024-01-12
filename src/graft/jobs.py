@@ -8,6 +8,7 @@ from typing import Dict, Optional, List
 
 from kubernetes import config, client
 from kubernetes.client.rest import ApiException
+from yaml import dump
 
 _log = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class Task:
     name: str
     container: str
     prompt: str
+    dryrun: bool
 
 
 @dataclass
@@ -56,6 +58,9 @@ class ConfigMount:
 
     def create_configmap(self, core_api: client.CoreV1Api):
         """Insert the ConfigMap into k8s."""
+        definition = self.definition
+        yaml = dump(definition, default_flow_style=False, sort_keys=True)
+        print(yaml)
         return core_api.create_namespaced_config_map(
             namespace=self.namespace,
             body=self.definition
@@ -121,7 +126,7 @@ class JobMount:
         }, {
             "name": "code",
             "mountPath": "/code",
-        }] + config_mount.volume_mount
+        }, config_mount.volume_mount(project.name)]
 
         return {
             "apiVersion": "batch/v1",
@@ -145,7 +150,7 @@ class JobMount:
                             "image": self.container,
                             "imagePullPolicy": "IfNotPresent",
                             "command": [
-                                "/bin/bash/",
+                                "/bin/bash",
                                 "-c",
                                 f"git clone {project.git_address} -- ."
                                 f" && git checkout -b {project.branch}"
@@ -157,7 +162,8 @@ class JobMount:
                             "name": "main",
                             "image": self.container,
                             "imagePullPolicy": "IfNotPresent",
-                            "args": [config.mount_path] + project.args,
+                            "args": [config_mount.mount_path(project.name)] +
+                                    project.args,
                             "env": project.external_env,
                             "volumeMounts": volume_mounts,
                         }],
@@ -173,9 +179,9 @@ class JobMount:
                             "name": "private-key",
                             "secret": {
                                 "secretName": project.private_key_secret,
-                                "defaultMode": "0400"
+                                "defaultMode": 0o400
                             }
-                        }] + config_mount.volume_definition(),
+                        }, config_mount.volume_definition()]
                     }
                 }
             }
@@ -187,6 +193,8 @@ class JobMount:
                    project: Project):
         """Insert the ConfigMap into k8s."""
         manifest = self.definition(config_mount, project)
+        yaml = dump(manifest, default_flow_style=False, sort_keys=True)
+        print(yaml)
         return batch_api.create_namespaced_job(
             body=manifest,
             namespace=self.namespace
@@ -217,23 +225,25 @@ class TaskWatcher(Thread):
                 self.reap_jobs(api)
                 continue
 
+            # Check guard value for quit
+            if data is None:
+                return
+
             try:
                 task_data = data["task"]
                 task = Task(**task_data)
 
                 project_data = data["project"]
                 project = Project.default(**project_data)
-            except TypeError:
+            except TypeError as e:
                 _log.error(
-                    "Could not make Task + Project out of data, got: %s", data)
+                    "Could not make Task + Project out of data\n%s\n\n%s",
+                    e, data)
                 continue
             except KeyError:
                 _log.error("Got an invalid container entry: %s", data)
                 continue
 
-            # Check guard value for quit
-            if task is None:
-                return
             self.start_job(api, project, task)
             self.reap_jobs(api)
 
@@ -266,7 +276,8 @@ class TaskWatcher(Thread):
                   project: Project,
                   task: Task):
         job_name = create_job(api, self.namespace, project, task)
-        self._jobs.append(job_name)
+        if not task.dryrun:
+            self._jobs.append(job_name)
 
 
 def list_active_jobs(api: client.BatchV1Api, namespace: str) -> Dict[str, Job]:
@@ -324,11 +335,18 @@ def delete_immediate(api, job_name, namespace):
 def create_job(api: client.BatchV1Api,
                namespace: str,
                project: Project,
-               task: Task):
+               task: Task) -> str:
     core_api = client.CoreV1Api(api_client=api.api_client)
     config_mount = ConfigMount(task.name, namespace, task.prompt)
-    config_mount.create_configmap(core_api)
+    if task.dryrun:
+        _log.info("Config Mount: \n%s", config_mount.definition)
+    else:
+        config_mount.create_configmap(core_api)
     job_mount = JobMount(task.name, namespace, task.container)
-    api_response = job_mount.create_job(api, config_mount, project)
+    if task.dryrun:
+        definition = job_mount.definition(config_mount, project)
+        _log.info("Job Mount: \n%s", definition)
+        return None
 
+    api_response = job_mount.create_job(api, config_mount, project)
     return api_response.metadata.name
