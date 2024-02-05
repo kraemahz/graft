@@ -1,10 +1,11 @@
 import logging
 
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from queue import Queue, Empty
 from threading import Thread
 from typing import Dict, Optional, List
+from typing_extensions import Self
 
 from kubernetes import config, client
 from kubernetes.client.rest import ApiException
@@ -27,6 +28,43 @@ class Task:
     container: str
     prompt: str
     dryrun: bool
+
+
+@dataclass
+class Project:
+    name: str
+    git_address: str
+    branch: str
+    known_hosts_config_map: str
+    private_key_secret: str
+    external_env: List[Dict[str, Dict]]
+    args: List[str]
+
+    @classmethod
+    def default(cls, **project_data):
+        project_name = project_data["name"]
+
+        if not project_data.get("known_hosts_config_map"):
+            project_data["known_hosts_config_map"] = "github-known-hosts"
+
+        if not project_data.get("private_key_secret"):
+            project_data["private_key_secret"] = f"{project_name}-rsa-key"
+
+        return cls(**project_data)
+
+
+@dataclass
+class NextBuildJob:
+    task: Task
+    project: Project
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def from_dict(payload: dict) -> Self:
+        task = Task(**payload["task"])
+        project = Project.default(**payload["project"])
+        return NextBuildJob(task, project)
 
 
 @dataclass
@@ -78,29 +116,6 @@ class ConfigMount:
             "mountPath": self.mount_path(app_name),
             "subPath": self.filename
         }
-
-
-@dataclass
-class Project:
-    name: str
-    git_address: str
-    branch: str
-    known_hosts_config_map: str
-    private_key_secret: str
-    external_env: List[Dict[str, Dict]]
-    args: List[str]
-
-    @classmethod
-    def default(cls, **project_data):
-        project_name = project_data["name"]
-
-        if not project_data.get("known_hosts_config_map"):
-            project_data["known_hosts_config_map"] = "github-known-hosts"
-
-        if not project_data.get("private_key_secret"):
-            project_data["private_key_secret"] = f"{project_name}-rsa-key"
-
-        return cls(**project_data)
 
 
 @dataclass
@@ -230,11 +245,7 @@ class TaskWatcher(Thread):
                 return
 
             try:
-                task_data = data["task"]
-                task = Task(**task_data)
-
-                project_data = data["project"]
-                project = Project.default(**project_data)
+                next_build_job = NextBuildJob.from_dict(data)
             except TypeError as e:
                 _log.error(
                     "Could not make Task + Project out of data\n%s\n\n%s",
@@ -244,7 +255,7 @@ class TaskWatcher(Thread):
                 _log.error("Got an invalid container entry: %s", data)
                 continue
 
-            self.start_job(api, project, task)
+            self.start_job(api, next_build_job)
             self.reap_jobs(api)
 
     def reap_jobs(self, api: client.BatchV1Api):
@@ -273,10 +284,9 @@ class TaskWatcher(Thread):
 
     def start_job(self,
                   api: client.BatchV1Api,
-                  project: Project,
-                  task: Task):
-        job_name = create_job(api, self.namespace, project, task)
-        if not task.dryrun:
+                  job: NextBuildJob):
+        job_name = create_job(api, self.namespace, job.project, job.task)
+        if not job.task.dryrun:
             self._jobs.append(job_name)
 
 

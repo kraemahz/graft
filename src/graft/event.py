@@ -1,6 +1,6 @@
 import base64
-import logging
 import json
+import logging
 
 from dataclasses import asdict, dataclass
 from queue import Queue
