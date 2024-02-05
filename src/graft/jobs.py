@@ -159,6 +159,7 @@ class JobMount:
                         }
                     },
                     "spec": {
+                        "serviceAccountName": "graft-job",
                         "restartPolicy": "Never",
                         "initContainers": [{
                             "name": "checkout",
