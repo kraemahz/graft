@@ -84,7 +84,7 @@ class ConfigMount:
                 "namespace": self.namespace,
                 "name": self.name,
             },
-            "data": {self.filename: self.payload}
+            "data": {self.filename: self.payload},
         }
 
     @property
@@ -100,21 +100,17 @@ class ConfigMount:
         yaml = dump(definition, default_flow_style=False, sort_keys=True)
         print(yaml)
         return core_api.create_namespaced_config_map(
-            namespace=self.namespace,
-            body=self.definition
+            namespace=self.namespace, body=self.definition
         )
 
     def volume_definition(self):
-        return {
-            "name": self.mount_name,
-            "configMap": {"name": self.name}
-        }
+        return {"name": self.mount_name, "configMap": {"name": self.name}}
 
     def volume_mount(self, app_name: str):
         return {
             "name": self.mount_name,
             "mountPath": self.mount_path(app_name),
-            "subPath": self.filename
+            "subPath": self.filename,
         }
 
 
@@ -124,24 +120,31 @@ class JobMount:
     namespace: str
     container: str
 
-    def definition(self,
-                   config_mount: ConfigMount,
-                   project: Project):
+    def definition(self, config_mount: ConfigMount, project: Project):
         """Create a Job config from the default template."""
 
-        volume_mounts = [{
-            "name": "private-key",
-            "readOnly": True,
-            "mountPath": "/root/.ssh/id_rsa",
-            "subPath": "id_rsa"
-        }, {
-            "name": "known-hosts",
-            "mountPath": "/root/.ssh/known_hosts",
-            "subPath": "known_hosts"
-        }, {
-            "name": "code",
-            "mountPath": "/code",
-        }, config_mount.volume_mount(project.name)]
+        volume_mounts = [
+            {
+                "name": "private-key",
+                "readOnly": True,
+                "mountPath": "/root/key",
+            },
+            {
+                "name": "known-hosts",
+                "mountPath": "/root/known-hosts",
+            },
+            {
+                "name": "code",
+                "mountPath": "/code",
+            },
+            config_mount.volume_mount(project.name),
+        ]
+
+        copy_ssh_secrets = (
+            "mkdir -p /root/.ssh/ && "
+            "cp /root/key/private-key /root/.ssh/id_rsa && "
+            "cp /root/known-hosts/known_hosts /root/.ssh/known_hosts"
+        )
 
         return {
             "apiVersion": "batch/v1",
@@ -153,68 +156,76 @@ class JobMount:
             "spec": {
                 "backoffLimit": 0,
                 "template": {
-                    "metadata": {
-                        "labels": {
-                            "app": project.name
-                        }
-                    },
+                    "metadata": {"labels": {"app": project.name}},
                     "spec": {
                         "serviceAccountName": "graft-job",
                         "restartPolicy": "Never",
-                        "initContainers": [{
-                            "name": "checkout",
-                            "image": self.container,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": [
-                                "/bin/bash",
-                                "-c",
-                                f"git clone {project.git_address} -- ."
-                                f" && git checkout -b {project.branch}"
-                            ],
-                            "env": project.external_env,
-                            "volumeMounts": volume_mounts,
-                        }],
-                        "containers": [{
-                            "name": "main",
-                            "image": self.container,
-                            "imagePullPolicy": "IfNotPresent",
-                            "args": [config_mount.mount_path(project.name)] +
-                                    project.args,
-                            "env": project.external_env,
-                            "volumeMounts": volume_mounts,
-                        }],
-                        "volumes": [{
-                            "name": "code",
-                            "emptyDir": {"sizeLimit": "1G"}
-                        }, {
-                            "name": "known-hosts",
-                            "configMap": {
-                                "name": project.known_hosts_config_map
+                        "initContainers": [
+                            {
+                                "name": "checkout",
+                                "image": self.container,
+                                "imagePullPolicy": "IfNotPresent",
+                                "command": [
+                                    "/bin/bash",
+                                    "-c",
+                                    copy_ssh_secrets
+                                    + f" && git clone {project.git_address} -- . && "
+                                    f"git checkout -b {project.branch}",
+                                ],
+                                "env": project.external_env,
+                                "volumeMounts": volume_mounts,
                             }
-                        }, {
-                            "name": "private-key",
-                            "secret": {
-                                "secretName": project.private_key_secret,
-                                "defaultMode": 0o400
+                        ],
+                        "containers": [
+                            {
+                                "name": "main",
+                                "image": self.container,
+                                "lifecycle": {
+                                    "postStart": {
+                                        "exec": {
+                                            "command": [
+                                                "/bin/bash",
+                                                "-c",
+                                                copy_ssh_secrets,
+                                            ]
+                                        }
+                                    }
+                                },
+                                "imagePullPolicy": "IfNotPresent",
+                                "args": [config_mount.mount_path(project.name)]
+                                + project.args,
+                                "env": project.external_env,
+                                "volumeMounts": volume_mounts,
                             }
-                        }, config_mount.volume_definition()]
-                    }
-                }
-            }
+                        ],
+                        "volumes": [
+                            {"name": "code", "emptyDir": {"sizeLimit": "1G"}},
+                            {
+                                "name": "known-hosts",
+                                "configMap": {"name": project.known_hosts_config_map},
+                            },
+                            {
+                                "name": "private-key",
+                                "secret": {
+                                    "secretName": project.private_key_secret,
+                                    "defaultMode": 0o400,
+                                },
+                            },
+                            config_mount.volume_definition(),
+                        ],
+                    },
+                },
+            },
         }
 
-    def create_job(self,
-                   batch_api: client.BatchV1Api,
-                   config_mount: ConfigMount,
-                   project: Project):
+    def create_job(
+        self, batch_api: client.BatchV1Api, config_mount: ConfigMount, project: Project
+    ):
         """Insert the ConfigMap into k8s."""
         manifest = self.definition(config_mount, project)
         yaml = dump(manifest, default_flow_style=False, sort_keys=True)
         print(yaml)
-        return batch_api.create_namespaced_job(
-            body=manifest,
-            namespace=self.namespace
-        )
+        return batch_api.create_namespaced_job(body=manifest, namespace=self.namespace)
 
 
 class TaskWatcher(Thread):
@@ -249,8 +260,8 @@ class TaskWatcher(Thread):
                 next_build_job = NextBuildJob.from_dict(data)
             except TypeError as e:
                 _log.error(
-                    "Could not make Task + Project out of data\n%s\n\n%s",
-                    e, data)
+                    "Could not make Task + Project out of data\n%s\n\n%s", e, data
+                )
                 continue
             except KeyError:
                 _log.error("Got an invalid container entry: %s", data)
@@ -273,8 +284,9 @@ class TaskWatcher(Thread):
                 new_jobs.append(job_name)
 
         if jobs:
-            _log.warn("Namespace has other jobs. They will be deleted: %s",
-                      list(jobs.keys()))
+            _log.warn(
+                "Namespace has other jobs. They will be deleted: %s", list(jobs.keys())
+            )
             for job in jobs.values():
                 self.delete_job(api, job.job_name)
 
@@ -283,9 +295,7 @@ class TaskWatcher(Thread):
     def delete_job(self, api: client.BatchV1Api, job_name: str):
         delete_immediate(api, job_name, self.namespace)
 
-    def start_job(self,
-                  api: client.BatchV1Api,
-                  job: NextBuildJob):
+    def start_job(self, api: client.BatchV1Api, job: NextBuildJob):
         job_name = create_job(api, self.namespace, job.project, job.task)
         if not job.task.dryrun:
             self._jobs.append(job_name)
@@ -308,23 +318,21 @@ def list_active_jobs(api: client.BatchV1Api, namespace: str) -> Dict[str, Job]:
     return jobs
 
 
-def get_job_log(api: client.BatchV1Api,
-                job_name: str,
-                namespace: str) -> Optional[str]:
+def get_job_log(api: client.BatchV1Api, job_name: str, namespace: str) -> Optional[str]:
     """Find the log of the latest pod in the job."""
     core_api = client.CoreV1Api(api_client=api.api_client)
-    selector = 'job-name={}'.format(job_name)
-    pods = core_api.list_namespaced_pod(namespace=namespace,
-                                        label_selector=selector)
+    selector = "job-name={}".format(job_name)
+    pods = core_api.list_namespaced_pod(namespace=namespace, label_selector=selector)
     if not pods.items:
         return None
 
     # Get the logs of the last created pod
-    last_pod = sorted(pods.items,
-                      key=lambda pod: pod.metadata.creation_timestamp,
-                      reverse=True)[0]
-    log = core_api.read_namespaced_pod_log(name=last_pod.metadata.name,
-                                           namespace=namespace)
+    last_pod = sorted(
+        pods.items, key=lambda pod: pod.metadata.creation_timestamp, reverse=True
+    )[0]
+    log = core_api.read_namespaced_pod_log(
+        name=last_pod.metadata.name, namespace=namespace
+    )
     return log
 
 
@@ -332,21 +340,17 @@ def delete_immediate(api, job_name, namespace):
     """Delete a job with no grace period"""
     core_api = client.CoreV1Api(api_client=api.api_client)
     try:
-        api.delete_namespaced_job(job_name,
-                                  namespace,
-                                  grace_period_seconds=0)
+        api.delete_namespaced_job(job_name, namespace, grace_period_seconds=0)
         core_api.delete_namespaced_config_map(
-            job_name,
-            namespace,
-            grace_period_seconds=0)
+            job_name, namespace, grace_period_seconds=0
+        )
     except ApiException as e:
         _log.error("Delete failed: %s", e)
 
 
-def create_job(api: client.BatchV1Api,
-               namespace: str,
-               project: Project,
-               task: Task) -> str:
+def create_job(
+    api: client.BatchV1Api, namespace: str, project: Project, task: Task
+) -> str:
     core_api = client.CoreV1Api(api_client=api.api_client)
     config_mount = ConfigMount(task.name, namespace, task.prompt)
     if task.dryrun:

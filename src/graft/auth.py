@@ -15,8 +15,7 @@ class AuthConfig:
     client_id: str
 
 
-def get_auth_token(config: AuthConfig,
-                   client_secret: str) -> str:
+def get_auth_token(config: AuthConfig, client_secret: str) -> str:
     """Get the keycloak client credential token to authorize with services.
     Args:
       keycloak_host (str): Host string for keycloak.
@@ -26,14 +25,13 @@ def get_auth_token(config: AuthConfig,
       client_secret (str): Secret key for keycloak auth.
     """
     token_url = f"https://{config.keycloak_host}/realms/{config.keycloak_realm}/protocol/openid-connect/token"
-    encoded = base64.b64encode(f"{config.client_id}:{config.client_secret}").decode('utf-8')
-    headers = {
-        "Authorization": f"Basic {encoded}"
-    }
-    data = {
-        "grant_type": "client_credentials"
-    }
+    encoded = base64.b64encode(f"{config.client_id}:{config.client_secret}").decode(
+        "utf-8"
+    )
+    headers = {"Authorization": f"Basic {encoded}"}
+    data = {"grant_type": "client_credentials"}
     response = requests.post(
-        token_url, headers=headers, data=data, verify=config.keycloak_ca)
+        token_url, headers=headers, data=data, verify=config.keycloak_ca
+    )
     response.raise_for_status()
     return response.json()["access_token"]

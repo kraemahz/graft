@@ -26,9 +26,9 @@ def parse_args(args: List[str]) -> argparse.Namespace:
         action="version",
         version=f"graft {__version__}",
     )
-    parser.add_argument(dest="config",
-                        help="Configuration file",
-                        type=argparse.FileType('r'))
+    parser.add_argument(
+        dest="config", help="Configuration file", type=argparse.FileType("r")
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -52,10 +52,7 @@ def setup_logging(loglevel: int):
     """Setup basic logging"""
     logformat = "[%(asctime)s] %(levelname)s:%(name)s:%(message)s"
     logging.basicConfig(
-        level=loglevel,
-        stream=sys.stdout,
-        format=logformat,
-        datefmt="%Y-%m-%d %H:%M:%S"
+        level=loglevel, stream=sys.stdout, format=logformat, datefmt="%Y-%m-%d %H:%M:%S"
     )
 
 
@@ -88,9 +85,7 @@ def main(args: List[str]):
 
     task_queue = queue.Queue()
     sources = config.prism.event_sources
-    client = connect_to_event_listener(config.prism,
-                                       token=token,
-                                       queue=task_queue)
+    client = connect_to_event_listener(config.prism, token=token, queue=task_queue)
     watcher = TaskWatcher(config.namespace, task_queue)
     watcher.start()
 

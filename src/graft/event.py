@@ -21,26 +21,23 @@ class PrismConfig:
 
 def encode_b64(data: str) -> str:
     """Do the string dance to appease the byte-encoded gods"""
-    return base64.standard_b64encode(data.encode('utf-8')).decode('utf-8')
+    return base64.standard_b64encode(data.encode("utf-8")).decode("utf-8")
 
 
 def push_job_result(client: Client, result: Job, sources: List[str]):
     result = asdict(result)
     result["completion_time"] = result["completion_time"].isoformat()
     result["job_log"] = (
-        encode_b64(result["job_log"])
-        if result["job_log"] is not None else None
+        encode_b64(result["job_log"]) if result["job_log"] is not None else None
     )
     json_text = json.dumps(result)
     _log.info("Job result: %s", json_text)
-    json_bytes = json_text.encode('utf-8')
+    json_bytes = json_text.encode("utf-8")
     for source in sources:
         client.emit(source, json_bytes)
 
 
-def connect_to_event_listener(config: PrismConfig,
-                              token: Optional[str],
-                              queue: Queue):
+def connect_to_event_listener(config: PrismConfig, token: Optional[str], queue: Queue):
     def event_handler(wavelet: Wavelet):
         for photon in wavelet.photons:
             data = json.loads(photon.payload)
