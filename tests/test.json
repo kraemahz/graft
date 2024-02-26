@@ -1,4 +1,0 @@
-{"prism": {"addr": "localhost:5050",
-           "event_sources": ["urn:subseq.io:builds:job:result"],
-           "event_sinks": ["urn:subseq.io:builds:k8s:job:submitted"]},
- "namespace": "default"}
