@@ -199,7 +199,7 @@ class JobMount:
                             }
                         ],
                         "volumes": [
-                            {"name": "code", "emptyDir": {"sizeLimit": "1G"}},
+                            {"name": "code", "emptyDir": {"sizeLimit": "10G"}},
                             {
                                 "name": "known-hosts",
                                 "configMap": {"name": project.known_hosts_config_map},
