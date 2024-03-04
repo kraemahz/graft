@@ -34,6 +34,7 @@ def push_job_result(client: Client, result: Job, sources: List[str]):
     _log.info("Job result: %s", json_text)
     json_bytes = json_text.encode("utf-8")
     for source in sources:
+        _log.info("Emit %s", source)
         client.emit(source, json_bytes)
 
 
