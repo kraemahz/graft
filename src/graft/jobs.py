@@ -245,6 +245,7 @@ class TaskWatcher(Thread):
         else:
             config.load_incluster_config()
         api = client.BatchV1Api()
+        _log.info("Graft started in namespace: %s", self.namespace)
         while True:
             try:
                 data = self._queue.get(timeout=self.QUEUE_POLL_RATE)
