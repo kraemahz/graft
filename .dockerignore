@@ -1,4 +1,5 @@
 src/*.egg-info
 venv/
+.venv/
 build/
 dist/
